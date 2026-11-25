@@ -1,5 +1,6 @@
 import type { Session } from '@supabase/supabase-js'
 import { useEffect, useState } from 'react'
+import { useRuta } from './lib/ruta'
 import { supabase } from './lib/supabase'
 import Login from './panel/Login'
 import Panel from './panel/Panel'
@@ -13,8 +14,8 @@ export default function App() {
     return () => data.subscription.unsubscribe()
   }, [])
 
-  const ruta = location.pathname.replace(/\/+$/, '')
-  if (ruta !== '' && ruta !== '/panel') {
+  const ruta = useRuta()
+  if (ruta !== '/' && ruta !== '/panel' && !ruta.startsWith('/panel/')) {
     return (
       <main className="p-4">
         <p className="etiqueta">Catálogo en construcción</p>
