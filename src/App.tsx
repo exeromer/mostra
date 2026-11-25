@@ -15,11 +15,11 @@ export default function App() {
 
   const ruta = location.pathname.replace(/\/+$/, '')
   if (ruta !== '' && ruta !== '/panel') {
-  return (
+    return (
       <main className="p-4">
         <p className="etiqueta">Catálogo en construcción</p>
-    </main>
-  )
+      </main>
+    )
   }
 
   if (session === undefined) return null
