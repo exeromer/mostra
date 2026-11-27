@@ -7,7 +7,9 @@ import {
   type ColorForm,
   type ProductoForm as Datos,
 } from '../lib/producto'
+import { extension, rutaGrilla } from '../lib/imagen'
 import { supabase } from '../lib/supabase'
+import FotosColor from './FotosColor'
 
 type Props = {
   tiendaId: string
@@ -22,7 +24,10 @@ const nuevoColor = (talles: ColorForm['talles'] = []): ColorForm => ({
   key: crypto.randomUUID(),
   nombre: '',
   talles: talles.map((t) => ({ ...t, sin_stock: false })),
+  fotos: [],
 })
+
+const urlPublica = (path: string) => supabase.storage.from('fotos').getPublicUrl(path).data.publicUrl
 
 /** Panel lateral en PC, pantalla completa en el celular. <dialog> da foco atrapado y Esc. */
 export default function ProductoForm({ tiendaId, productoId, categorias, onCerrar, onGuardado }: Props) {
@@ -35,6 +40,8 @@ export default function ProductoForm({ tiendaId, productoId, categorias, onCerra
   const [errorGeneral, setErrorGeneral] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [coloresUsados, setColoresUsados] = useState<string[]>([])
+  // Rutas de las fotos al abrir el producto: las que falten al guardar se borran.
+  const [fotosIniciales, setFotosIniciales] = useState<string[]>([])
 
   useEffect(() => {
     dialogo.current?.showModal()
@@ -54,26 +61,35 @@ export default function ProductoForm({ tiendaId, productoId, categorias, onCerra
     supabase
       .from('producto')
       .select(
-        'nombre, descripcion, precio, categoria_id, genero, categoria!inner(tienda_id), producto_color(id, nombre, orden, color_talle(talle, sin_stock, orden))',
+        'nombre, descripcion, precio, categoria_id, genero, categoria!inner(tienda_id), producto_color(id, nombre, orden, color_talle(talle, sin_stock, orden), color_foto(path, orden))',
       )
       .eq('id', productoId)
       .eq('categoria.tienda_id', tiendaId)
       .maybeSingle()
       .then(({ data: p, error }) => {
         if (error || !p) return setErrorGeneral('No encontramos este producto. Puede que se haya eliminado.')
-        type Fila = { id: string; nombre: string; orden: number; color_talle: { talle: string; sin_stock: boolean; orden: number }[] }
+        type Fila = {
+          id: string
+          nombre: string
+          orden: number
+          color_talle: { talle: string; sin_stock: boolean; orden: number }[]
+          color_foto: { path: string; orden: number }[]
+        }
         const porOrden = (a: { orden: number }, b: { orden: number }) => a.orden - b.orden
+        const colores = p.producto_color as Fila[]
+        setFotosIniciales(colores.flatMap((c) => c.color_foto.map((f) => f.path)))
         setDatos({
           nombre: p.nombre,
           descripcion: p.descripcion ?? '',
           precio: String(p.precio),
           categoria_id: p.categoria_id,
           genero: p.genero,
-          colores: (p.producto_color as Fila[]).sort(porOrden).map((c) => ({
+          colores: colores.sort(porOrden).map((c) => ({
             key: c.id,
             id: c.id,
             nombre: c.nombre,
             talles: c.color_talle.sort(porOrden).map(({ talle, sin_stock }) => ({ talle, sin_stock })),
+            fotos: c.color_foto.sort(porOrden).map(({ path }) => ({ key: path, path, vista: urlPublica(rutaGrilla(path)) })),
           })),
         })
       })
@@ -94,7 +110,7 @@ export default function ProductoForm({ tiendaId, productoId, categorias, onCerra
     if (Object.keys(validarProducto(datos)).length) return
     setGuardando(true)
     try {
-      await guardar(datos, productoId)
+      await guardar(datos, productoId, tiendaId, fotosIniciales)
       onGuardado()
     } catch {
       setErrorGeneral('No pudimos guardar el producto. Revisá la conexión y probá de nuevo.')
@@ -325,9 +341,13 @@ function BloqueColor(props: {
       </div>
       <MensajeError id={`${id}-error`} texto={errNombre} />
 
-      <div className="mt-3 grid h-20 place-items-center border border-dashed border-graphite text-xs text-graphite">
-        Fotos: próximamente
-      </div>
+      <FotosColor
+        fotos={color.fotos}
+        etiqueta={color.nombre || `color ${props.numero}`}
+        error={errores[`${color.key}.fotos`]}
+        errorId={`${id}-fotos-error`}
+        onCambiar={(fotos) => props.onCambiar({ fotos })}
+      />
 
       <p className="etiqueta mt-4 mb-2">Talles</p>
       <div className="flex flex-wrap gap-2">
@@ -435,12 +455,13 @@ function MensajeError({ id, texto }: { id?: string; texto?: string }) {
 }
 
 /**
- * Guarda producto, colores y talles. Los colores conservan su id (las fotos cuelgan de él);
+ * Guarda producto, colores, talles y fotos. Los colores conservan su id (las fotos cuelgan de él);
  * los talles se reemplazan enteros porque nada los referencia.
+ * Fotos: {tienda}/{producto}/{color}/{uuid}.webp para el detalle y {uuid}_g.webp para la grilla.
  * ponytail: son varias consultas sin transacción. Si falla a mitad de una edición, el formulario
  * conserva todo y alcanza con volver a guardar. Si molesta, pasar a una función RPC en la base.
  */
-async function guardar(d: Datos, productoId: string | null) {
+async function guardar(d: Datos, productoId: string | null, tiendaId: string, fotosIniciales: string[]) {
   const fila = {
     nombre: d.nombre.trim(),
     descripcion: d.descripcion.trim() || null,
@@ -457,10 +478,14 @@ async function guardar(d: Datos, productoId: string | null) {
     ? (ok(await supabase.from('producto').update(fila).eq('id', productoId)), productoId)
     : ok(await supabase.from('producto').insert(fila).select('id').single()).id
 
+  const subidas: string[] = [] // archivos subidos en este intento, para limpiarlos si algo falla
+  const actuales = new Set(d.colores.flatMap((c) => c.fotos.map((f) => f.path)))
+  const quitadas = fotosIniciales.filter((p) => !actuales.has(p))
+
   try {
     const existentes = d.colores.filter((c) => c.id).map((c) => c.id!)
     if (productoId) {
-      // ponytail: los archivos de fotos de los colores borrados se limpian con el paso 3b.
+      // Las fotos de los colores borrados se van en cascada; sus archivos se borran al final.
       let borrar = supabase.from('producto_color').delete().eq('producto_id', id)
       if (existentes.length) borrar = borrar.not('id', 'in', `(${existentes.join(',')})`)
       ok(await borrar)
@@ -495,9 +520,36 @@ async function guardar(d: Datos, productoId: string | null) {
         ),
       ),
     )
+
+    // Fotos: primero se quitan las que ya no están (el límite de 5 por color lo controla la base al insertar).
+    if (quitadas.length) ok(await supabase.from('color_foto').delete().in('path', quitadas))
+    const lista = d.colores.flatMap((c) => c.fotos.map((f, orden) => ({ f, orden, colorId: idDe(c) })))
+    await Promise.all(
+      lista
+        .filter(({ f }) => f.path)
+        .map(async ({ f, orden }) => ok(await supabase.from('color_foto').update({ orden }).eq('path', f.path!))),
+    )
+    const filas = await Promise.all(
+      lista
+        .filter(({ f }) => f.nueva)
+        .map(async ({ f, orden, colorId }) => {
+          const { detalle, grilla } = f.nueva!
+          const path = `${tiendaId}/${id}/${colorId}/${crypto.randomUUID()}.${extension(detalle)}`
+          const opciones = { contentType: detalle.type, cacheControl: '31536000' } // nombre único: no cambia nunca
+          subidas.push(path, rutaGrilla(path))
+          ok(await supabase.storage.from('fotos').upload(path, detalle, opciones))
+          ok(await supabase.storage.from('fotos').upload(rutaGrilla(path), grilla, opciones))
+          return { color_id: colorId, path, orden }
+        }),
+    )
+    if (filas.length) ok(await supabase.from('color_foto').insert(filas))
   } catch (e) {
+    if (subidas.length) await supabase.storage.from('fotos').remove(subidas)
     // Alta a medias: se borra el producto (en cascada) para no dejar uno incompleto.
     if (!productoId) await supabase.from('producto').delete().eq('id', id)
     throw e
   }
+
+  // ponytail: si falla, quedan archivos sueltos en Storage; no afecta al catálogo.
+  if (quitadas.length) await supabase.storage.from('fotos').remove(quitadas.flatMap((p) => [p, rutaGrilla(p)]))
 }

@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { comprimirWebp } from '../lib/imagen'
+import { comprimirImagen, extension } from '../lib/imagen'
 import { supabase } from '../lib/supabase'
 import { aSlug, aWhatsapp, errorSlug, type Tienda } from '../lib/tienda'
 
@@ -63,11 +63,11 @@ export default function TiendaForm({ userId, tienda, onGuardada, onCancelar }: P
 
     if (!logo) return onGuardada(data)
     try {
-      const path = `${data.id}/logo.webp`
-      const blob = await comprimirWebp(logo, 512, 200_000)
+      const blob = await comprimirImagen(logo, 512, 200_000)
+      const path = `${data.id}/logo.${extension(blob)}`
       const subida = await supabase.storage
         .from('fotos')
-        .upload(path, blob, { upsert: true, contentType: 'image/webp', cacheControl: '60' })
+        .upload(path, blob, { upsert: true, contentType: blob.type, cacheControl: '60' })
       if (subida.error) throw subida.error
       const { data: conLogo, error } = await supabase
         .from('tienda')

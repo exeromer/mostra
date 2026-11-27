@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { rutaGrilla } from '../lib/imagen'
 import { formatoPrecio } from '../lib/producto'
 import { Enlace, ir } from '../lib/ruta'
 import { supabase } from '../lib/supabase'
@@ -65,7 +66,7 @@ export default function Productos({ tiendaId, abierto }: { tiendaId: string; abi
     setProductos((l) => l?.filter((x) => x.id !== p.id))
     // ponytail: si falla, quedan archivos sueltos en Storage; no afecta al catálogo.
     if (fotos?.length) {
-      await supabase.storage.from('fotos').remove(fotos.flatMap((f) => [f.path, f.path.replace(/\.webp$/, '_g.webp')]))
+      await supabase.storage.from('fotos').remove(fotos.flatMap((f) => [f.path, rutaGrilla(f.path)]))
     }
   }
 

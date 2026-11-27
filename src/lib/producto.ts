@@ -17,8 +17,22 @@ export const TALLES_RAPIDOS = [
 ]
 
 export type TalleForm = { talle: string; sin_stock: boolean }
+
+export const MAX_FOTOS = 5
+
+/**
+ * path: ruta del detalle si la foto ya está subida. vista: URL para la miniatura.
+ * nueva: la foto elegida y procesada en el navegador, que se sube al guardar.
+ */
+export type FotoForm = {
+  key: string
+  path?: string
+  vista: string
+  nueva?: { original: File; detalle: Blob; grilla: Blob; mejorar: boolean; recorte: number | null }
+}
+
 /** key: identificador estable para React; id: el de la base, si el color ya existe. */
-export type ColorForm = { key: string; id?: string; nombre: string; talles: TalleForm[] }
+export type ColorForm = { key: string; id?: string; nombre: string; talles: TalleForm[]; fotos: FotoForm[] }
 export type ProductoForm = {
   nombre: string
   descripcion: string
@@ -42,8 +56,7 @@ export function sumarTalles(actuales: TalleForm[], nuevos: string[]) {
 
 /**
  * Las reglas del SRS 3.4.3 y de la base. Claves: nombre, descripcion, precio, categoria, genero,
- * colores, y por color `${key}.nombre` / `${key}.talles`. Vacío = válido.
- * ponytail: la foto obligatoria por color se valida con la carga de fotos (paso 3b).
+ * colores, y por color `${key}.nombre` / `${key}.fotos` / `${key}.talles`. Vacío = válido.
  */
 export function validarProducto(p: ProductoForm) {
   const e: Record<string, string> = {}
@@ -63,6 +76,9 @@ export function validarProducto(p: ProductoForm) {
     else if (n.length > 30) e[`${c.key}.nombre`] = 'Hasta 30 caracteres.'
     else if (colores.has(n.toLowerCase())) e[`${c.key}.nombre`] = 'Ese color ya está cargado.'
     colores.add(n.toLowerCase())
+
+    if (!c.fotos.length) e[`${c.key}.fotos`] = 'Agregá al menos una foto.'
+    else if (c.fotos.length > MAX_FOTOS) e[`${c.key}.fotos`] = `Hasta ${MAX_FOTOS} fotos por color.`
 
     if (!c.talles.length) e[`${c.key}.talles`] = 'Agregá al menos un talle.'
     else if (c.talles.some((t) => t.talle.length > 10)) e[`${c.key}.talles`] = 'Cada talle tiene hasta 10 caracteres.'
